@@ -60,7 +60,8 @@ Responses are slimmed: embedded catalog metadata is reduced to `id`, `name`, `sl
 - Use a token scoped to a role you can live with. Rotate it if it leaks.
 - Keep write mode off unless you are making changes, and review each write call.
 - Keep keys in files or env vars, not in chat. Example: `read -rs K && printf '%s' "$K" > ~/.segment_test_key && chmod 600 ~/.segment_test_key`.
-- Delete tools are irreversible.
+- Delete tools are irreversible and refuse to run without `confirm=True`.
+- All ids and `api_get` paths are validated (letters, digits, `_`, `-`, `/` only), so a prompt-injected value such as `x/../destinations/y` cannot redirect a call to another endpoint.
 
 ## Development
 

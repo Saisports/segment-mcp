@@ -6,6 +6,7 @@ Env:
   SEGMENT_MCP_MODE    read (default) | write  -- write enables mutating tools
 """
 import os
+import re
 from typing import Any
 
 import httpx
@@ -13,6 +14,26 @@ from mcp.server.fastmcp import FastMCP
 
 BASES = {"us": "https://api.segmentapis.com", "eu": "https://eu1.api.segmentapis.com"}
 mcp = FastMCP("segment")
+
+
+_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+_PATH_RE = re.compile(r"^/[A-Za-z0-9_\-/]*$")
+
+
+def _id(value: str, what: str = "id") -> str:
+    """Reject anything that is not a plain Segment id, so tool args cannot alter the URL path
+    (e.g. '../destinations/x' or '?x=1') when interpolated into a request path."""
+    if not isinstance(value, str) or not _ID_RE.fullmatch(value):
+        raise ValueError(f"invalid {what}: expected letters, digits, '_' or '-'")
+    return value
+
+
+def _path(value: str) -> str:
+    if not value.startswith("/"):
+        value = "/" + value
+    if ".." in value or "//" in value or not _PATH_RE.fullmatch(value):
+        raise ValueError("invalid path: only letters, digits, '_', '-' and '/' are allowed")
+    return value
 
 
 def _client() -> httpx.Client:
@@ -78,25 +99,25 @@ def list_sources(count: int = 100, cursor: str | None = None) -> Any:
 @mcp.tool()
 def get_source(source_id: str) -> Any:
     """Get one source."""
-    return _call("GET", f"/sources/{source_id}")
+    return _call("GET", f"/sources/{_id(source_id, "source_id")}")
 
 
 @mcp.tool()
 def list_connected_destinations(source_id: str, count: int = 100, cursor: str | None = None) -> Any:
     """List destinations connected to a source."""
-    return _call("GET", f"/sources/{source_id}/connected-destinations", _page(count, cursor))
+    return _call("GET", f"/sources/{_id(source_id, "source_id")}/connected-destinations", _page(count, cursor))
 
 
 @mcp.tool()
 def list_connected_warehouses(source_id: str) -> Any:
     """List warehouses connected to a source."""
-    return _call("GET", f"/sources/{source_id}/connected-warehouses")
+    return _call("GET", f"/sources/{_id(source_id, "source_id")}/connected-warehouses")
 
 
 @mcp.tool()
 def get_source_settings(source_id: str) -> Any:
     """Get a source's settings."""
-    return _call("GET", f"/sources/{source_id}/settings")
+    return _call("GET", f"/sources/{_id(source_id, "source_id")}/settings")
 
 
 @mcp.tool()
@@ -108,13 +129,13 @@ def list_destinations(count: int = 100, cursor: str | None = None) -> Any:
 @mcp.tool()
 def get_destination(destination_id: str) -> Any:
     """Get one destination."""
-    return _call("GET", f"/destinations/{destination_id}")
+    return _call("GET", f"/destinations/{_id(destination_id, "destination_id")}")
 
 
 @mcp.tool()
 def list_destination_subscriptions(destination_id: str, count: int = 100, cursor: str | None = None) -> Any:
     """List destination action subscriptions (mappings/triggers)."""
-    return _call("GET", f"/destinations/{destination_id}/subscriptions", _page(count, cursor))
+    return _call("GET", f"/destinations/{_id(destination_id, "destination_id")}/subscriptions", _page(count, cursor))
 
 
 @mcp.tool()
@@ -124,7 +145,7 @@ def destination_delivery_metrics(
     """Delivery metrics summary for a source->destination pair. Times are ISO-8601 UTC."""
     return _call(
         "GET",
-        f"/destinations/{destination_id}/delivery-metrics",
+        f"/destinations/{_id(destination_id, "destination_id")}/delivery-metrics",
         {"sourceId": source_id, "startTime": start_time, "endTime": end_time, "granularity": granularity},
     )
 
@@ -166,19 +187,19 @@ def list_tracking_plans(count: int = 100, cursor: str | None = None) -> Any:
 @mcp.tool()
 def get_tracking_plan(tracking_plan_id: str) -> Any:
     """Get a tracking plan."""
-    return _call("GET", f"/tracking-plans/{tracking_plan_id}")
+    return _call("GET", f"/tracking-plans/{_id(tracking_plan_id, "tracking_plan_id")}")
 
 
 @mcp.tool()
 def list_tracking_plan_rules(tracking_plan_id: str, count: int = 200, cursor: str | None = None) -> Any:
     """List rules (events/properties) in a tracking plan."""
-    return _call("GET", f"/tracking-plans/{tracking_plan_id}/rules", _page(count, cursor))
+    return _call("GET", f"/tracking-plans/{_id(tracking_plan_id, "tracking_plan_id")}/rules", _page(count, cursor))
 
 
 @mcp.tool()
 def list_tracking_plan_sources(tracking_plan_id: str) -> Any:
     """List sources attached to a tracking plan."""
-    return _call("GET", f"/tracking-plans/{tracking_plan_id}/sources")
+    return _call("GET", f"/tracking-plans/{_id(tracking_plan_id, "tracking_plan_id")}/sources")
 
 
 @mcp.tool()
@@ -190,7 +211,7 @@ def list_reverse_etl_models(count: int = 100, cursor: str | None = None) -> Any:
 @mcp.tool()
 def get_reverse_etl_sync_status(model_id: str, sync_id: str) -> Any:
     """Get status of a Reverse ETL sync."""
-    return _call("GET", f"/reverse-etl-models/{model_id}/syncs/{sync_id}")
+    return _call("GET", f"/reverse-etl-models/{_id(model_id, "model_id")}/syncs/{_id(sync_id, "sync_id")}")
 
 
 @mcp.tool()
@@ -202,7 +223,7 @@ def list_warehouses() -> Any:
 @mcp.tool()
 def list_profiles_warehouses(space_id: str) -> Any:
     """List Profiles Sync warehouses for a space (spa_...)."""
-    return _call("GET", f"/spaces/{space_id}/profiles-warehouses")
+    return _call("GET", f"/spaces/{_id(space_id, "space_id")}/profiles-warehouses")
 
 
 @mcp.tool()
@@ -233,9 +254,7 @@ def list_audit_events(
 def api_get(path: str, params: dict | None = None, full: bool = False) -> Any:
     """Escape hatch: GET any Public API path (e.g. /labels, /usage/mtu). Always read-only.
     Responses are slimmed unless full=True."""
-    if not path.startswith("/"):
-        path = "/" + path
-    return _call("GET", path, params, full=full)
+    return _call("GET", _path(path), params, full=full)
 
 
 @mcp.tool()
@@ -263,13 +282,13 @@ def find_in_catalog(kind: str, query: str, count: int = 200) -> Any:
 @mcp.tool()
 def get_catalog_destination(metadata_id: str) -> Any:
     """Full catalog entry for a destination type, including its required settings (options)."""
-    return _call("GET", f"/catalog/destinations/{metadata_id}", full=True)
+    return _call("GET", f"/catalog/destinations/{_id(metadata_id, "metadata_id")}", full=True)
 
 
 @mcp.tool()
 def get_warehouse_connection_state(warehouse_id: str) -> Any:
     """Check whether Segment can currently connect to a warehouse."""
-    return _call("GET", f"/warehouses/{warehouse_id}/connection-state")
+    return _call("GET", f"/warehouses/{_id(warehouse_id, "warehouse_id")}/connection-state")
 
 
 # ---------- write tools (SEGMENT_MCP_MODE=write) ----------
@@ -277,13 +296,13 @@ def get_warehouse_connection_state(warehouse_id: str) -> Any:
 def set_destination_enabled(destination_id: str, enabled: bool) -> Any:
     """WRITE: enable or disable a destination."""
     _require_write()
-    return _call("PATCH", f"/destinations/{destination_id}", body={"enabled": enabled})
+    return _call("PATCH", f"/destinations/{_id(destination_id, "destination_id")}", body={"enabled": enabled})
 
 
 @mcp.tool()
 def list_catalog_destination_actions(metadata_id: str) -> Any:
     """Compact list of a destination type's actions: id, slug, name, default trigger, and field names."""
-    d = _call("GET", f"/catalog/destinations/{metadata_id}", full=True)["data"]
+    d = _call("GET", f"/catalog/destinations/{_id(metadata_id, "metadata_id")}", full=True)["data"]
     dest = d.get("destination") or d.get("destinationMetadata") or next(iter(d.values()))
     return [
         {"id": a.get("id"), "slug": a.get("slug"), "name": a.get("name"),
@@ -300,7 +319,7 @@ def create_destination_subscription(
     """WRITE: create an Actions subscription (mapping). trigger is a Segment filter such as
     'type = "track"'. settings holds the action's field mappings (e.g. url, method, data)."""
     _require_write()
-    return _call("POST", f"/destinations/{destination_id}/subscriptions", body={
+    return _call("POST", f"/destinations/{_id(destination_id, "destination_id")}/subscriptions", body={
         "name": name, "actionId": action_id, "trigger": trigger,
         "settings": settings, "enabled": enabled})
 
@@ -328,21 +347,25 @@ def create_destination(
 def connect_source_to_warehouse(warehouse_id: str, source_id: str) -> Any:
     """WRITE: connect a source to an existing warehouse."""
     _require_write()
-    return _call("POST", f"/warehouses/{warehouse_id}/connected-sources", body={"sourceId": source_id})
+    return _call("POST", f"/warehouses/{_id(warehouse_id, "warehouse_id")}/connected-sources", body={"sourceId": source_id})
 
 
 @mcp.tool()
-def delete_source(source_id: str) -> Any:
-    """WRITE: delete a source (irreversible)."""
+def delete_source(source_id: str, confirm: bool = False) -> Any:
+    """WRITE: delete a source (irreversible). Requires confirm=True."""
     _require_write()
-    return _call("DELETE", f"/sources/{source_id}")
+    if not confirm:
+        raise RuntimeError("Refusing to delete without confirm=True")
+    return _call("DELETE", f"/sources/{_id(source_id, "source_id")}")
 
 
 @mcp.tool()
-def delete_destination(destination_id: str) -> Any:
-    """WRITE: delete a destination (irreversible)."""
+def delete_destination(destination_id: str, confirm: bool = False) -> Any:
+    """WRITE: delete a destination (irreversible). Requires confirm=True."""
     _require_write()
-    return _call("DELETE", f"/destinations/{destination_id}")
+    if not confirm:
+        raise RuntimeError("Refusing to delete without confirm=True")
+    return _call("DELETE", f"/destinations/{_id(destination_id, "destination_id")}")
 
 
 def main() -> None:
